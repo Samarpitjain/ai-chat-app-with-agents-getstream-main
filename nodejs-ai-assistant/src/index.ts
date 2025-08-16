@@ -1,22 +1,34 @@
+// nodejs-ai-assistant/src/index.ts
+
+import { Clerk, ClerkExpressRequireAuth } from "@clerk/clerk-sdk-node";
 import cors from "cors";
 import "dotenv/config";
-import express from "express";
+import express, { Request, Response } from "express";
 import { createAgent } from "./agents/createAgent";
 import { AgentPlatform, AIAgent } from "./agents/types";
 import { apiKey, serverClient } from "./serverClient";
 
+// Extend Express Request type to include the 'auth' property
+// This is the key fix for the TypeScript errors.
+declare global {
+  namespace Express {
+    interface Request {
+      auth: {
+        userId: string;
+      };
+    }
+  }
+}
+
+const clerk = Clerk({ secretKey: process.env.CLERK_SECRET_KEY });
 const app = express();
 app.use(express.json());
 app.use(cors({ origin: "*" }));
 
-// Map to store the AI Agent instances
-// [user_id string]: AI Agent
 const aiAgentCache = new Map<string, AIAgent>();
 const pendingAiAgents = new Set<string>();
 
-// TODO: temporary set to 8 hours, should be cleaned up at some point
 const inactivityThreshold = 480 * 60 * 1000;
-// Periodically check for inactive AI agents and dispose of them
 setInterval(async () => {
   const now = Date.now();
   for (const [userId, aiAgent] of aiAgentCache) {
@@ -36,151 +48,139 @@ app.get("/", (req, res) => {
   });
 });
 
-/**
- * Handle the request to start the AI Agent
- */
-app.post("/start-ai-agent", async (req, res) => {
-  const { channel_id, channel_type = "messaging" } = req.body;
-  console.log(`[API] /start-ai-agent called for channel: ${channel_id}`);
-
-  // Simple validation
-  if (!channel_id) {
-    res.status(400).json({ error: "Missing required fields" });
-    return;
-  }
-
-  const user_id = `ai-bot-${channel_id.replace(/[!]/g, "")}`;
-
+// Use ClerkExpressRequireAuth middleware and handle the request
+app.post("/token", ClerkExpressRequireAuth(), async (req: Request, res: Response) => {
   try {
-    // Prevent multiple agents from being created for the same channel simultaneously
-    if (!aiAgentCache.has(user_id) && !pendingAiAgents.has(user_id)) {
-      console.log(`[API] Creating new agent for ${user_id}`);
-      pendingAiAgents.add(user_id);
+    // Get the user ID from the authenticated request
+    const { userId } = req.auth;
+    const clerkUser = await clerk.users.getUser(userId);
 
-      await serverClient.upsertUser({
-        id: user_id,
-        name: "AI Writing Assistant",
-      });
-
-      const channel = serverClient.channel(channel_type, channel_id);
-      await channel.addMembers([user_id]);
-
-      const agent = await createAgent(
-        user_id,
-        AgentPlatform.OPENAI,
-        channel_type,
-        channel_id
-      );
-
-      await agent.init();
-      // Final check to prevent race conditions where an agent might have been added
-      // while this one was initializing.
-      if (aiAgentCache.has(user_id)) {
-        await agent.dispose();
-      } else {
-        aiAgentCache.set(user_id, agent);
-      }
-    } else {
-      console.log(`AI Agent ${user_id} already started or is pending.`);
+    if (!clerkUser) {
+      return res.status(404).json({ error: "Clerk user not found" });
     }
 
-    res.json({ message: "AI Agent started", data: [] });
+    // Use the Clerk User ID as the Stream User ID
+    const streamUserId = clerkUser.id;
+
+    // Ensure the user exists in Stream
+    await serverClient.upsertUser({
+      id: streamUserId,
+      name: clerkUser.firstName || clerkUser.username || "User",
+      image: clerkUser.imageUrl,
+    });
+
+    const token = serverClient.createToken(streamUserId);
+    res.json({ token });
+
   } catch (error) {
-    const errorMessage = (error as Error).message;
-    console.error("Failed to start AI Agent", errorMessage);
-    res
-      .status(500)
-      .json({ error: "Failed to start AI Agent", reason: errorMessage });
-  } finally {
-    pendingAiAgents.delete(user_id);
+    console.error("Error generating Stream token:", error);
+    res.status(500).json({ error: "Failed to generate token" });
   }
 });
 
-/**
- * Handle the request to stop the AI Agent
- */
-app.post("/stop-ai-agent", async (req, res) => {
-  const { channel_id } = req.body;
-  console.log(`[API] /stop-ai-agent called for channel: ${channel_id}`);
-  const user_id = `ai-bot-${channel_id.replace(/[!]/g, "")}`;
-  try {
-    const aiAgent = aiAgentCache.get(user_id);
-    if (aiAgent) {
-      console.log(`[API] Disposing agent for ${user_id}`);
-      await disposeAiAgent(aiAgent);
-      aiAgentCache.delete(user_id);
-    } else {
-      console.log(`[API] Agent for ${user_id} not found in cache.`);
+
+// --- The rest of your endpoints remain unchanged ---
+
+app.post("/start-ai-agent", async (req, res) => {
+    const { channel_id, channel_type = "messaging" } = req.body;
+    console.log(`[API] /start-ai-agent called for channel: ${channel_id}`);
+
+    if (!channel_id) {
+        res.status(400).json({ error: "Missing required fields" });
+        return;
     }
-    res.json({ message: "AI Agent stopped", data: [] });
-  } catch (error) {
-    const errorMessage = (error as Error).message;
-    console.error("Failed to stop AI Agent", errorMessage);
-    res
-      .status(500)
-      .json({ error: "Failed to stop AI Agent", reason: errorMessage });
-  }
+
+    const user_id = `ai-bot-${channel_id.replace(/[!]/g, "")}`;
+
+    try {
+        if (!aiAgentCache.has(user_id) && !pendingAiAgents.has(user_id)) {
+            console.log(`[API] Creating new agent for ${user_id}`);
+            pendingAiAgents.add(user_id);
+
+            await serverClient.upsertUser({
+                id: user_id,
+                name: "AI Writing Assistant",
+            });
+
+            const channel = serverClient.channel(channel_type, channel_id);
+            await channel.addMembers([user_id]);
+
+            const agent = await createAgent(
+                user_id,
+                AgentPlatform.OPENAI, 
+                channel_type,
+                channel_id
+            );
+
+            await agent.init();
+
+            if (aiAgentCache.has(user_id)) {
+                await agent.dispose();
+            } else {
+                aiAgentCache.set(user_id, agent);
+            }
+        } else {
+            console.log(`AI Agent ${user_id} already started or is pending.`);
+        }
+
+        res.json({ message: "AI Agent started", data: [] });
+    } catch (error) {
+        const errorMessage = (error as Error).message;
+        console.error("Failed to start AI Agent", errorMessage);
+        res.status(500).json({ error: "Failed to start AI Agent", reason: errorMessage });
+    } finally {
+        pendingAiAgents.delete(user_id);
+    }
+});
+
+app.post("/stop-ai-agent", async (req, res) => {
+    const { channel_id } = req.body;
+    console.log(`[API] /stop-ai-agent called for channel: ${channel_id}`);
+    const user_id = `ai-bot-${channel_id.replace(/[!]/g, "")}`;
+    try {
+        const aiAgent = aiAgentCache.get(user_id);
+        if (aiAgent) {
+            console.log(`[API] Disposing agent for ${user_id}`);
+            await disposeAiAgent(aiAgent);
+            aiAgentCache.delete(user_id);
+        } else {
+            console.log(`[API] Agent for ${user_id} not found in cache.`);
+        }
+        res.json({ message: "AI Agent stopped", data: [] });
+    } catch (error) {
+        const errorMessage = (error as Error).message;
+        console.error("Failed to stop AI Agent", errorMessage);
+        res.status(500).json({ error: "Failed to stop AI Agent", reason: errorMessage });
+    }
 });
 
 app.get("/agent-status", (req, res) => {
-  const { channel_id } = req.query;
-  if (!channel_id || typeof channel_id !== "string") {
-    return res.status(400).json({ error: "Missing channel_id" });
-  }
-  const user_id = `ai-bot-${channel_id.replace(/[!]/g, "")}`;
-  console.log(
-    `[API] /agent-status called for channel: ${channel_id} (user: ${user_id})`
-  );
-
-  if (aiAgentCache.has(user_id)) {
-    console.log(`[API] Status for ${user_id}: connected`);
-    res.json({ status: "connected" });
-  } else if (pendingAiAgents.has(user_id)) {
-    console.log(`[API] Status for ${user_id}: connecting`);
-    res.json({ status: "connecting" });
-  } else {
-    console.log(`[API] Status for ${user_id}: disconnected`);
-    res.json({ status: "disconnected" });
-  }
-});
-
-// Token provider endpoint - generates secure tokens
-app.post("/token", async (req, res) => {
-  try {
-    const { userId } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({
-        error: "userId is required",
-      });
+    const { channel_id } = req.query;
+    if (!channel_id || typeof channel_id !== "string") {
+        return res.status(400).json({ error: "Missing channel_id" });
     }
+    const user_id = `ai-bot-${channel_id.replace(/[!]/g, "")}`;
+    console.log(`[API] /agent-status called for channel: ${channel_id} (user: ${user_id})`);
 
-    // Create token with expiration (1 hour) and issued at time for security
-    const issuedAt = Math.floor(Date.now() / 1000);
-    const expiration = issuedAt + 60 * 60; // 1 hour from now
-
-    const token = serverClient.createToken(userId, expiration, issuedAt);
-
-    res.json({ token });
-  } catch (error) {
-    console.error("Error generating token:", error);
-    res.status(500).json({
-      error: "Failed to generate token",
-    });
-  }
+    if (aiAgentCache.has(user_id)) {
+        res.json({ status: "connected" });
+    } else if (pendingAiAgents.has(user_id)) {
+        res.json({ status: "connecting" });
+    } else {
+        res.json({ status: "disconnected" });
+    }
 });
 
 async function disposeAiAgent(aiAgent: AIAgent) {
-  await aiAgent.dispose();
-  if (!aiAgent.user) {
-    return;
-  }
-  await serverClient.deleteUser(aiAgent.user.id, {
-    hard_delete: true,
-  });
+    await aiAgent.dispose();
+    if (!aiAgent.user) {
+        return;
+    }
+    await serverClient.deleteUser(aiAgent.user.id, {
+        hard_delete: true,
+    });
 }
 
-// Start the Express server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Server is running on http://localhost:${port}`);

@@ -20,14 +20,15 @@ import { ChatSidebar } from "./chat-sidebar";
 
 interface AuthenticatedAppProps {
   user: User;
+  token: string;
   onLogout: () => void;
 }
 
-export const AuthenticatedApp = ({ user, onLogout }: AuthenticatedAppProps) => (
-  <ChatProvider user={user}>
-    <AuthenticatedCore user={user} onLogout={onLogout} />
-  </ChatProvider>
-);
+export const AuthenticatedApp = ({ user, token, onLogout }: AuthenticatedAppProps) => (
+    <ChatProvider user={user} token={token}>
+      <AuthenticatedCore user={user} onLogout={onLogout} />
+    </ChatProvider>
+  );
 
 const AuthenticatedCore = ({ user, onLogout }: AuthenticatedAppProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
