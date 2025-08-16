@@ -1,7 +1,3 @@
-Of course. Here is a fully updated `README.md` file that reflects all the changes we've made, including the switch to the Gemini API and the addition of Clerk for authentication.
-
------
-
 # AI Chat App with Clerk, Google Gemini & Stream
 
 A modern, full-stack AI-powered chat application built with a robust tech stack including **Stream Chat** for real-time messaging, **Google's Gemini API** for intelligent responses, and **Clerk** for secure and seamless user authentication.
