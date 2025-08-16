@@ -1,6 +1,6 @@
 import { StreamChat } from "stream-chat";
 import { apiKey, serverClient } from "../serverClient";
-import { OpenAIAgent } from "./openai/OpenAIAgent";
+import { GeminiAgent } from "./gemini/GeminiAgent"; // We will create this file next
 import { AgentPlatform, AIAgent } from "./types";
 
 export const createAgent = async (
@@ -19,10 +19,11 @@ export const createAgent = async (
   const channel = chatClient.channel(channel_type, channel_id);
   await channel.watch();
 
+  // We are now defaulting to the GeminiAgent
   switch (platform) {
     case AgentPlatform.WRITING_ASSISTANT:
-    case AgentPlatform.OPENAI:
-      return new OpenAIAgent(chatClient, channel);
+    case AgentPlatform.OPENAI: // Keep this for compatibility, but it will now point to Gemini
+      return new GeminiAgent(chatClient, channel);
     default:
       throw new Error(`Unsupported agent platform: ${platform}`);
   }
