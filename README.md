@@ -43,7 +43,7 @@ A modern AI-powered chat application built with **Stream Chat**, **OpenAI**, and
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repository-url>
+git clone <https://github.com/Samarpitjain/ai-chat-app-with-agents-getstream-main>
 cd chat-ai-app
 ```
 
@@ -74,8 +74,8 @@ Configure your `.env` file with the following keys:
 STREAM_API_KEY=your_stream_api_key_here
 STREAM_API_SECRET=your_stream_api_secret_here
 
-# OpenAI API key - Get from https://platform.openai.com/api-keys
-OPENAI_API_KEY=your_openai_api_key_here
+# Google Gemini API key - From https://ai.google.dev/aistudio
+GEMINI_API_KEY=your_gemini_api_key_here
 
 # Tavily API key - Get from https://tavily.com
 TAVILY_API_KEY=your_tavily_api_key_here
