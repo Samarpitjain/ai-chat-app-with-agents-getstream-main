@@ -137,7 +137,6 @@ npm run dev
 
 The frontend will be available at `http://localhost:8080`.
 
-## 部署
 
 This application uses a professional hybrid deployment strategy, leveraging the best platform for each part of the stack.
 
